@@ -66,15 +66,25 @@ struct Character {
     unsigned int Advance;   // Offset to advance to next glyph
 };
 
+enum ECorner {
+    TopLeft = 1,
+    BottomLeft,
+    BottomRight,
+    TopRight,
+};
+
 // Global variables
 GLuint shaderProgram, VAO, VBO;
 GLuint textShaderProgram, textVAO, textVBO;
 float scale = 1.0f;
 int windowWidth, windowHeight;
 float a = 1.0f;
+float k = 0.5f;
+bool increase = true;
 float turnRatio = 0.0f;
 float approxStep = 0.1f;
 bool playAnimation = false;
+ECorner currentCorner = static_cast<ECorner>(0);
 std::map<char, Character> Characters; // Map of characters for text rendering
 glm::mat4 projection; // Projection matrix for text rendering
 
@@ -201,7 +211,12 @@ bool initFont() {
 
     FT_Face face;
     // Load font (use a path to a TTF font file on your system)
-    if (FT_New_Face(ft, "C:/Windows/Fonts/arial.ttf", 0, &face)) {
+    // if (FT_New_Face(ft, "C:/Windows/Fonts/arial.ttf", 0, &face)) {
+    //     std::cerr << "ERROR::FREETYPE: Failed to load font" << std::endl;
+    //     return false;
+    // }
+
+    if (FT_New_Face(ft, "/System/Library/Fonts/Helvetica.ttc", 0, &face)) {
         std::cerr << "ERROR::FREETYPE: Failed to load font" << std::endl;
         return false;
     }
@@ -349,6 +364,17 @@ float NDCToPixel(float ndcValue, bool isRelativeToWidth) {
     }
 }
 
+void rotateModel(glm::mat4 &modelMatrix, float x, float y, glm::vec2 offset) {
+    // Step 1: Translate to the top-left corner (rotation point)
+    modelMatrix = glm::translate(modelMatrix, glm::vec3(offset.x + x, offset.y + y, 0.0f));
+
+    // Step 2: Apply rotation (around the Z-axis)
+    modelMatrix = glm::rotate(modelMatrix, glm::radians(turnRatio), glm::vec3(0.0f, 0.0f, 1.0f));
+
+    // Step 3: Translate back to the original position
+    modelMatrix = glm::translate(modelMatrix, glm::vec3(-x, -y, 0.0f));
+}
+
 void drawSquare(glm::vec2 offset, float squareSize, std::vector<GLfloat> color) {
     if (color.size() != 4) {
         throw std::runtime_error("draw line has to have 4 elements");
@@ -373,14 +399,22 @@ void drawSquare(glm::vec2 offset, float squareSize, std::vector<GLfloat> color) 
     // Create a transformation matrix
     glm::mat4 modelMatrix = glm::mat4(1.0f); // Start with identity matrix
 
-    // Step 1: Translate to the top-left corner (rotation point)
-    modelMatrix = glm::translate(modelMatrix, glm::vec3(offset.x - halfSize, offset.y + halfSize, 0.0f));
+    modelMatrix = glm::scale(modelMatrix, glm::vec3(k, k, 1.0f));
 
-    // Step 2: Apply rotation (around the Z-axis)
-    modelMatrix = glm::rotate(modelMatrix, glm::radians(turnRatio), glm::vec3(0.0f, 0.0f, 1.0f));
+    if (currentCorner == TopLeft) {
+        rotateModel(modelMatrix, -halfSize, halfSize, offset);
+    }
+    else if (currentCorner == BottomLeft) {
+        rotateModel(modelMatrix, -halfSize, -halfSize, offset);
+    }
+    else if (currentCorner == BottomRight) {
+        rotateModel(modelMatrix, halfSize, -halfSize, offset);
+    }
+    else if (currentCorner == TopRight) {
+        rotateModel(modelMatrix, halfSize, halfSize, offset);
+    }
 
-    // Step 3: Translate back to the original position
-    modelMatrix = glm::translate(modelMatrix, glm::vec3(halfSize, -halfSize, 0.0f));
+
 
     // Apply the transformation to the vertices
     for (size_t i = 0; i < model.size(); i += 2) {
@@ -471,9 +505,45 @@ void mainLoop(GLFWwindow* window) {
         drawSquare({0.0f, 0.0f}, 0.3f, {1.0f, 0.0f, 0.0f, 1.0f});
 
         if (playAnimation) {
-            a -= 0.001f;
-            turnRatio += 0.3f;
+            turnRatio += 1.0f;
+
+            if (k < 0.5f) {
+                k = 0.5f;
+                increase = true;
+            }
+            if (k > 2.0f) {
+                k = 2.0f;
+                increase = false;
+            }
+
+            if (increase) {
+                k += 0.001f;
+            } else if (!increase) {
+                k -= 0.001f;
+            }
+
         }
+
+        if (turnRatio >= 360 * 4) {
+            turnRatio = 0.0f;
+            currentCorner = static_cast<ECorner>(1);
+        }
+
+        if (turnRatio / 360 > static_cast<float>(currentCorner)) {
+            currentCorner = static_cast<ECorner>(currentCorner + 1);
+        }
+
+        std::string ratioString = "Turn ratio: " + std::to_string(turnRatio);
+        std::string cornerString = "Current corner: " + std::to_string(currentCorner);
+        std::string scaleString = "Scale: " + std::to_string(k);
+        std::string increaseString = "Increase: " + std::to_string(increase);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        renderText(ratioString, NDCToPixel(0.05f, true), NDCToPixel(1.9f, false), 1.5f, {0.0f, 0.5f, 0.5f});
+        renderText(cornerString, NDCToPixel(0.05f, true), NDCToPixel(1.8f, false), 1.5f, {0.0f, 0.5f, 0.5f});
+        renderText(scaleString, NDCToPixel(0.05f, true), NDCToPixel(1.7f, false), 1.5f, {0.0f, 0.5f, 0.5f});
+        renderText(increaseString, NDCToPixel(0.05f, true), NDCToPixel(1.6f, false), 1.5f, {0.0f, 0.5f, 0.5f});
+        glDisable(GL_BLEND);
 
         glfwSwapBuffers(window);
         glfwPollEvents();
