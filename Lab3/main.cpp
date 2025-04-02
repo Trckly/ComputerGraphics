@@ -495,7 +495,13 @@ void handleKeyboardInput(GLFWwindow* window) {
 
 // Main loop for handling events and rendering
 void mainLoop(GLFWwindow* window) {
+    auto lastFrame = static_cast<float>(glfwGetTime());
+
     while (!glfwWindowShouldClose(window)) {
+        const auto currentFrame = static_cast<float>(glfwGetTime());
+        const float deltaTime = currentFrame - lastFrame;
+        lastFrame = currentFrame;
+
         glClear(GL_COLOR_BUFFER_BIT);
 
         glfwGetFramebufferSize(glfwGetCurrentContext(), &windowWidth, &windowHeight);
@@ -505,7 +511,7 @@ void mainLoop(GLFWwindow* window) {
         drawSquare({0.0f, 0.0f}, 0.3f, {1.0f, 0.0f, 0.0f, 1.0f});
 
         if (playAnimation) {
-            turnRatio += 1.0f;
+            turnRatio += 75.0f * deltaTime;
 
             if (k < 0.5f) {
                 k = 0.5f;
@@ -517,9 +523,9 @@ void mainLoop(GLFWwindow* window) {
             }
 
             if (increase) {
-                k += 0.001f;
+                k += 0.1f * deltaTime;
             } else if (!increase) {
-                k -= 0.001f;
+                k -= 0.1f * deltaTime;
             }
 
         }
