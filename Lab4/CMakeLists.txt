@@ -62,14 +62,14 @@ if(WIN32)
             ${GLM_INCLUDE_DIR}
     )
 
-    # Add link directories if needed
-#    link_directories(
-#            "C:/OpenGLLibraries/glew/lib/Release/x64"
-#            "C:/OpenGLLibraries/glfw/build/src/Debug"
-#            "C:/OpenGLLibraries/freetype/objs"
-#    )
+#     Add link directories if needed
+        link_directories(
+                "C:/OpenGLLibraries/glew/lib/Release/x64"
+                "C:/OpenGLLibraries/glfw/build/src/Debug"
+                "C:/OpenGLLibraries/freetype/objs"
+        )
 
-    add_executable(Lab3 main.cpp)
+    add_executable(Lab4 main.cpp)
     target_link_libraries(
             Lab4
             ${GLEW_LIBRARY}

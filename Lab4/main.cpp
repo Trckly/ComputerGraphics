@@ -5,12 +5,12 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
 #include <cmath>
+#include <map>
 #include <vector>
 
 const int SCR_WIDTH = 800;
 const int SCR_HEIGHT = 800;
 
-// Updated vertex and fragment shader source code with lighting
 const char* vertexShaderSource = R"(
     #version 330 core
     layout (location = 0) in vec3 aPos;
@@ -91,6 +91,8 @@ Camera camera = {
     0.1f  // Setting sensitivity
 };
 
+int binomialCoef(int n, int k);
+
 void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
     if (camera.firstMouse) {
         camera.lastX = xpos;
@@ -121,16 +123,261 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
     camera.front = glm::normalize(front);
 }
 
+// Bezier curve function: B(t) = (1-t)³P₀ + 3(1-t)²tP₁ + 3(1-t)t²P₂ + t³P₃
+glm::vec3 bezierCurve(float t, const glm::vec3& p0, const glm::vec3& p1, const glm::vec3& p2, const glm::vec3& p3) {
+    float u = 1.0f - t;
+    float tt = t * t;
+    float uu = u * u;
+    float uuu = uu * u;
+    float ttt = tt * t;
+
+    glm::vec3 point = uuu * p0;              // (1-t)³ * P₀
+    point += 3.0f * uu * t * p1;             // 3(1-t)² * t * P₁
+    point += 3.0f * u * tt * p2;             // 3(1-t) * t² * P₂
+    point += ttt * p3;                       // t³ * P₃
+
+    return point;
+}
+
+void generateBezierPlane(std::vector<float>& vertices, std::vector<unsigned int>& indices,
+                         int resolution = 20, float size = 2.0f) {
+    float step = 1.0f / (resolution - 1);
+    float holeSize = size * 0.4f;  // Diamond hole size
+
+    // Control points for the Bezier surface
+    glm::vec3 controlPoints[4][4] = {
+        { glm::vec3(-size, 0.0f, -size), glm::vec3(-size/3, 0.5f, -size), glm::vec3(size/3, 0.5f, -size), glm::vec3(size, 0.0f, -size) },
+        { glm::vec3(-size, 0.5f, -size/3), glm::vec3(-size/3, 1.0f, -size/3), glm::vec3(size/3, 1.0f, -size/3), glm::vec3(size, 0.5f, -size/3) },
+        { glm::vec3(-size, 0.5f, size/3), glm::vec3(-size/3, 1.0f, size/3), glm::vec3(size/3, 1.0f, size/3), glm::vec3(size, 0.5f, size/3) },
+        { glm::vec3(-size, 0.0f, size), glm::vec3(-size/3, 0.5f, size), glm::vec3(size/3, 0.5f, size), glm::vec3(size, 0.0f, size) }
+    };
+
+    // Specialized Bernstein polynomial calculator for cubic bezier (n=3)
+    auto bernstein3 = [](int i, float t) {
+        float u = 1.0f - t;
+
+        switch (i) {
+            case 0: return u * u * u;           // (1-t)³
+            case 1: return 3.0f * u * u * t;    // 3(1-t)²t
+            case 2: return 3.0f * u * t * t;    // 3(1-t)t²
+            case 3: return t * t * t;           // t³
+            default: return 0.0f;
+        }
+    };
+
+    // First pass: compute all surface points
+    std::vector<glm::vec3> surfacePoints(resolution * resolution);
+    std::vector<bool> insideHole(resolution * resolution, false);
+
+    for (int i = 0; i < resolution; i++) {
+        float u = i * step;
+        for (int j = 0; j < resolution; j++) {
+            float v = j * step;
+            int idx = i * resolution + j;
+            glm::vec3 point(0.0f);
+
+            // Compute Bezier surface point using specialized formula
+            for (int ki = 0; ki <= 3; ki++) {
+                float bu = bernstein3(ki, u);
+                for (int kj = 0; kj <= 3; kj++) {
+                    float bv = bernstein3(kj, v);
+                    point += controlPoints[ki][kj] * (bu * bv);
+                }
+            }
+            surfacePoints[idx] = point;
+
+            // Strict diamond hole boundary using Manhattan distance
+            float manhattanDist = fabs(point.x) + fabs(point.z);
+            insideHole[idx] = (manhattanDist < holeSize);
+        }
+    }
+
+    // Second pass: identify boundary points
+    std::vector<bool> isBoundaryPoint(resolution * resolution, false);
+
+    for (int i = 0; i < resolution; i++) {
+        for (int j = 0; j < resolution; j++) {
+            int idx = i * resolution + j;
+            if (insideHole[idx]) continue;
+
+            // Check if this point is adjacent to a hole point
+            for (int di = -1; di <= 1; di++) {
+                for (int dj = -1; dj <= 1; dj++) {
+                    if (di == 0 && dj == 0) continue;
+
+                    int ni = i + di;
+                    int nj = j + dj;
+
+                    if (ni >= 0 && ni < resolution && nj >= 0 && nj < resolution) {
+                        int neighborIdx = ni * resolution + nj;
+                        if (insideHole[neighborIdx]) {
+                            isBoundaryPoint[idx] = true;
+                            break;
+                        }
+                    }
+                }
+                if (isBoundaryPoint[idx]) break;
+            }
+        }
+    }
+
+    // Third pass: Calculate normals with special handling for boundary points
+    std::vector<glm::vec3> surfaceNormals(resolution * resolution);
+
+    for (int i = 0; i < resolution; i++) {
+        for (int j = 0; j < resolution; j++) {
+            int idx = i * resolution + j;
+            if (insideHole[idx]) continue;
+
+            // Calculate the tangent vectors
+            glm::vec3 tangentU, tangentV;
+
+            if (i == 0)
+                tangentU = surfacePoints[(i + 1) * resolution + j] - surfacePoints[i * resolution + j];
+            else if (i == resolution - 1)
+                tangentU = surfacePoints[i * resolution + j] - surfacePoints[(i - 1) * resolution + j];
+            else
+                tangentU = surfacePoints[(i + 1) * resolution + j] - surfacePoints[(i - 1) * resolution + j];
+
+            if (j == 0)
+                tangentV = surfacePoints[i * resolution + j + 1] - surfacePoints[i * resolution + j];
+            else if (j == resolution - 1)
+                tangentV = surfacePoints[i * resolution + j] - surfacePoints[i * resolution + j - 1];
+            else
+                tangentV = surfacePoints[i * resolution + j + 1] - surfacePoints[i * resolution + j - 1];
+
+            // Compute normal from tangents
+            if (glm::length(tangentU) < 0.0001f || glm::length(tangentV) < 0.0001f) {
+                surfaceNormals[idx] = glm::vec3(0.0f, 1.0f, 0.0f);
+            } else {
+                surfaceNormals[idx] = glm::normalize(glm::cross(tangentU, tangentV));
+
+                // Special handling for boundary points - direct normals toward hole center
+                if (isBoundaryPoint[idx]) {
+                    glm::vec3 point = surfacePoints[idx];
+                    // Vector from origin to point projected on XZ plane
+                    glm::vec3 fromCenter = glm::normalize(glm::vec3(point.x, 0.0f, point.z));
+
+                    // Blend normal with outward direction for sharp edge
+                    glm::vec3 upVector = glm::vec3(0.0f, 1.0f, 0.0f);
+                    glm::vec3 outwardNormal = glm::normalize(fromCenter + 0.5f * upVector);
+
+                    // Strong blend toward the outward direction for boundary points
+                    surfaceNormals[idx] = glm::normalize(surfaceNormals[idx] * 0.2f + outwardNormal * 0.8f);
+                }
+            }
+        }
+    }
+
+    // Fourth pass: Create exact boundary vertices along the diamond edge
+    std::map<std::pair<int, int>, int> edgeVertexMap;  // Maps edge indices to vertex indices
+    int vertexCount = 0;
+
+    // Add all non-hole vertices first
+    for (int i = 0; i < resolution; i++) {
+        for (int j = 0; j < resolution; j++) {
+            int idx = i * resolution + j;
+            if (insideHole[idx]) continue;
+
+            // Add vertex
+            vertices.push_back(surfacePoints[idx].x);
+            vertices.push_back(surfacePoints[idx].y);
+            vertices.push_back(surfacePoints[idx].z);
+            vertices.push_back(surfaceNormals[idx].x);
+            vertices.push_back(surfaceNormals[idx].y);
+            vertices.push_back(surfaceNormals[idx].z);
+
+            edgeVertexMap[{i, j}] = vertexCount++;
+        }
+    }
+
+    // Generate triangles while properly handling the hole
+    for (int i = 0; i < resolution - 1; i++) {
+        for (int j = 0; j < resolution - 1; j++) {
+            // Get quad corner indices
+            std::pair<int, int> p00 = {i, j};
+            std::pair<int, int> p10 = {i+1, j};
+            std::pair<int, int> p01 = {i, j+1};
+            std::pair<int, int> p11 = {i+1, j+1};
+
+            // Get vertex indices, -1 if inside hole
+            int v00 = insideHole[i * resolution + j] ? -1 : edgeVertexMap[p00];
+            int v10 = insideHole[(i+1) * resolution + j] ? -1 : edgeVertexMap[p10];
+            int v01 = insideHole[i * resolution + j+1] ? -1 : edgeVertexMap[p01];
+            int v11 = insideHole[(i+1) * resolution + j+1] ? -1 : edgeVertexMap[p11];
+
+            // Count how many vertices are valid
+            int validCount = (v00 != -1 ? 1 : 0) + (v10 != -1 ? 1 : 0) +
+                            (v01 != -1 ? 1 : 0) + (v11 != -1 ? 1 : 0);
+
+            // Only create triangles if we have 3 or 4 valid vertices
+            if (validCount == 4) {
+                // Standard quad triangulation
+                indices.push_back(v00);
+                indices.push_back(v10);
+                indices.push_back(v01);
+
+                indices.push_back(v01);
+                indices.push_back(v10);
+                indices.push_back(v11);
+            }
+            else if (validCount == 3) {
+                // Single triangle for a partial quad
+                if (v00 != -1 && v10 != -1 && v01 != -1) {
+                    indices.push_back(v00);
+                    indices.push_back(v10);
+                    indices.push_back(v01);
+                }
+                else if (v10 != -1 && v01 != -1 && v11 != -1) {
+                    indices.push_back(v10);
+                    indices.push_back(v11);
+                    indices.push_back(v01);
+                }
+                else if (v00 != -1 && v01 != -1 && v11 != -1) {
+                    indices.push_back(v00);
+                    indices.push_back(v11);
+                    indices.push_back(v01);
+                }
+                else if (v00 != -1 && v10 != -1 && v11 != -1) {
+                    indices.push_back(v00);
+                    indices.push_back(v10);
+                    indices.push_back(v11);
+                }
+            }
+        }
+    }
+}
+
+
+// Improved binomial coefficient calculation using an iterative approach
+int binomialCoef(int n, int k) {
+    // C(n,k) = C(n,n-k)
+    if (k > n - k)
+        k = n - k;
+
+    if (k == 0)
+        return 1;
+
+    // Calculate using multiplicative formula
+    int result = 1;
+    for (int i = 0; i < k; ++i) {
+        result *= (n - i);
+        result /= (i + 1);
+    }
+
+    return result;
+}
+
 // Updated sphere generation to include normals for lighting
 void generateSphereVertices(std::vector<float>& vertices, float radius, unsigned int sectorCount, unsigned int stackCount) {
     float x, y, z, xy;
     float nx, ny, nz;
-    float sectorStep = 2 * M_PI / sectorCount;
-    float stackStep = M_PI / stackCount;
+    float sectorStep = 2 * glm::pi<float>() / sectorCount;
+    float stackStep = glm::pi<float>() / stackCount;
     float sectorAngle, stackAngle;
 
     for (unsigned int i = 0; i <= stackCount; ++i) {
-        stackAngle = M_PI / 2 - i * stackStep;
+        stackAngle = glm::pi<float>() / 2 - i * stackStep;
         xy = radius * cosf(stackAngle);
         z = radius * sinf(stackAngle);
 
@@ -255,7 +502,7 @@ int main() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    GLFWwindow* window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "OpenGL Sphere with Lighting", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "OpenGL Sphere & Bezier Plane with Diamond Hole", nullptr, nullptr);
     if (!window) {
         std::cerr << "Failed to create GLFW window" << std::endl;
         glfwTerminate();
@@ -275,39 +522,66 @@ int main() {
 
     GLuint shaderProgram = createShaderProgram();
 
-    std::vector<float> vertices;
-    std::vector<unsigned int> indices;
-    generateSphereVertices(vertices, 1.0f, 36, 18);  // Generate vertices for a sphere with normals
-    generateSphereIndices(indices, 36, 18);          // Generate indices for sphere
+    // Create sphere
+    std::vector<float> sphereVertices;
+    std::vector<unsigned int> sphereIndices;
+    generateSphereVertices(sphereVertices, 1.0f, 36, 18);
+    generateSphereIndices(sphereIndices, 36, 18);
 
-    GLuint VAO, VBO, EBO;
-    glGenVertexArrays(1, &VAO);
-    glGenBuffers(1, &VBO);
-    glGenBuffers(1, &EBO);
+    GLuint sphereVAO, sphereVBO, sphereEBO;
+    glGenVertexArrays(1, &sphereVAO);
+    glGenBuffers(1, &sphereVBO);
+    glGenBuffers(1, &sphereEBO);
 
-    glBindVertexArray(VAO);
+    glBindVertexArray(sphereVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, sphereVBO);
+    glBufferData(GL_ARRAY_BUFFER, sphereVertices.size() * sizeof(float), sphereVertices.data(), GL_STATIC_DRAW);
 
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sphereEBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sphereIndices.size() * sizeof(unsigned int), sphereIndices.data(), GL_STATIC_DRAW);
 
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
-
-    // Position attribute
+    // Position attribute for sphere
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
 
-    // Normal attribute
+    // Normal attribute for sphere
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
     glEnableVertexAttribArray(1);
 
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);
 
-    // Light properties and object color
+    // Create Bezier plane with diamond hole
+    std::vector<float> planeVertices;
+    std::vector<unsigned int> planeIndices;
+    generateBezierPlane(planeVertices, planeIndices, 40, 2.0f);  // Higher resolution for smoother curves
+
+    GLuint planeVAO, planeVBO, planeEBO;
+    glGenVertexArrays(1, &planeVAO);
+    glGenBuffers(1, &planeVBO);
+    glGenBuffers(1, &planeEBO);
+
+    glBindVertexArray(planeVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, planeVBO);
+    glBufferData(GL_ARRAY_BUFFER, planeVertices.size() * sizeof(float), planeVertices.data(), GL_STATIC_DRAW);
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, planeEBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, planeIndices.size() * sizeof(unsigned int), planeIndices.data(), GL_STATIC_DRAW);
+
+    // Position attribute for plane
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    // Normal attribute for plane
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+
+    glBindVertexArray(0);
+
+    // Light properties and object colors
     glm::vec3 lightPos(1.2f, 1.0f, 2.0f);
     glm::vec3 lightColor(1.0f, 1.0f, 1.0f);
-    glm::vec3 objectColor(0.5f, 0.2f, 0.7f); // Purple-ish color for object
+    glm::vec3 sphereColor(0.5f, 0.2f, 0.7f);    // Purple-ish color for sphere
+    glm::vec3 planeColor(0.2f, 0.6f, 0.5f);     // Teal-ish color for plane
 
     while (!glfwWindowShouldClose(window)) {
         processInput(window, camera);
@@ -321,11 +595,9 @@ int main() {
         glUniform3fv(glGetUniformLocation(shaderProgram, "lightPos"), 1, glm::value_ptr(lightPos));
         glUniform3fv(glGetUniformLocation(shaderProgram, "viewPos"), 1, glm::value_ptr(camera.position));
         glUniform3fv(glGetUniformLocation(shaderProgram, "lightColor"), 1, glm::value_ptr(lightColor));
-        glUniform3fv(glGetUniformLocation(shaderProgram, "objectColor"), 1, glm::value_ptr(objectColor));
 
         glm::mat4 view = getViewMatrix(camera);
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
-        glm::mat4 model = glm::mat4(1.0f);
 
         GLuint viewLoc = glGetUniformLocation(shaderProgram, "view");
         GLuint projectionLoc = glGetUniformLocation(shaderProgram, "projection");
@@ -333,25 +605,48 @@ int main() {
 
         glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
         glUniformMatrix4fv(projectionLoc, 1, GL_FALSE, glm::value_ptr(projection));
-        glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
 
         // Move the light position over time for dynamic lighting effect
         float timeValue = glfwGetTime();
-        lightPos.x = 1.2f + sin(timeValue) * 2.0f;
-        lightPos.y = 1.0f + sin(timeValue / 2.0f) * 1.0f;
+        // lightPos.x = 2.4f + sin(timeValue) * 2.0f;
+        // lightPos.y = 2.0f + sin(timeValue / 2.0f) * 1.0f;
 
-        glBindVertexArray(VAO);
-        glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0);
-        glBindVertexArray(0);
+        lightPos.x = 4.0f;
+        lightPos.y = 3.0f;
+        lightPos.z = -0.5f;
+
+
+        // Draw sphere
+        glm::mat4 sphereModel = glm::mat4(1.0f);
+        sphereModel = glm::translate(sphereModel, glm::vec3(0.0f, 0.0f, 0.0f));
+        glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(sphereModel));
+        glUniform3fv(glGetUniformLocation(shaderProgram, "objectColor"), 1, glm::value_ptr(sphereColor));
+
+        glBindVertexArray(sphereVAO);
+        glDrawElements(GL_TRIANGLES, sphereIndices.size(), GL_UNSIGNED_INT, 0);
+
+        // Draw Bezier plane with hole
+        glm::mat4 planeModel = glm::mat4(1.0f);
+        planeModel = glm::translate(planeModel, glm::vec3(4.0f, -1.0f, 0.0f));
+        glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(planeModel));
+        glUniform3fv(glGetUniformLocation(shaderProgram, "objectColor"), 1, glm::value_ptr(planeColor));
+
+        glBindVertexArray(planeVAO);
+        glDrawElements(GL_TRIANGLES, planeIndices.size(), GL_UNSIGNED_INT, 0);
 
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
 
     // Clean up
-    glDeleteVertexArrays(1, &VAO);
-    glDeleteBuffers(1, &VBO);
-    glDeleteBuffers(1, &EBO);
+    glDeleteVertexArrays(1, &sphereVAO);
+    glDeleteBuffers(1, &sphereVBO);
+    glDeleteBuffers(1, &sphereEBO);
+
+    glDeleteVertexArrays(1, &planeVAO);
+    glDeleteBuffers(1, &planeVBO);
+    glDeleteBuffers(1, &planeEBO);
+
     glDeleteProgram(shaderProgram);
 
     glfwTerminate();

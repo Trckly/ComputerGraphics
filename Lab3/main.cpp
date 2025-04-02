@@ -211,15 +211,15 @@ bool initFont() {
 
     FT_Face face;
     // Load font (use a path to a TTF font file on your system)
-    // if (FT_New_Face(ft, "C:/Windows/Fonts/arial.ttf", 0, &face)) {
-    //     std::cerr << "ERROR::FREETYPE: Failed to load font" << std::endl;
-    //     return false;
-    // }
-
-    if (FT_New_Face(ft, "/System/Library/Fonts/Helvetica.ttc", 0, &face)) {
+    if (FT_New_Face(ft, "C:/Windows/Fonts/arial.ttf", 0, &face)) {
         std::cerr << "ERROR::FREETYPE: Failed to load font" << std::endl;
         return false;
     }
+
+    // if (FT_New_Face(ft, "/System/Library/Fonts/Helvetica.ttc", 0, &face)) {
+    //     std::cerr << "ERROR::FREETYPE: Failed to load font" << std::endl;
+    //     return false;
+    // }
 
     FT_Set_Pixel_Sizes(face, 0, 24); // Set size to load glyphs as
 
