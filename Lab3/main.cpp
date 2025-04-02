@@ -66,15 +66,25 @@ struct Character {
     unsigned int Advance;   // Offset to advance to next glyph
 };
 
+enum ECorner {
+    TopLeft = 1,
+    BottomLeft,
+    BottomRight,
+    TopRight,
+};
+
 // Global variables
 GLuint shaderProgram, VAO, VBO;
 GLuint textShaderProgram, textVAO, textVBO;
 float scale = 1.0f;
 int windowWidth, windowHeight;
 float a = 1.0f;
-float coordinateRotationAngle = 0.0f;
+float k = 0.5f;
+bool increase = true;
+float turnRatio = 0.0f;
 float approxStep = 0.1f;
 bool playAnimation = false;
+ECorner currentCorner = static_cast<ECorner>(0);
 std::map<char, Character> Characters; // Map of characters for text rendering
 glm::mat4 projection; // Projection matrix for text rendering
 
@@ -201,10 +211,15 @@ bool initFont() {
 
     FT_Face face;
     // Load font (use a path to a TTF font file on your system)
-    if (FT_New_Face(ft, "/System/Library/Fonts/Helvetica.ttc", 0, &face)) {
+    if (FT_New_Face(ft, "C:/Windows/Fonts/arial.ttf", 0, &face)) {
         std::cerr << "ERROR::FREETYPE: Failed to load font" << std::endl;
         return false;
     }
+
+    // if (FT_New_Face(ft, "/System/Library/Fonts/Helvetica.ttc", 0, &face)) {
+    //     std::cerr << "ERROR::FREETYPE: Failed to load font" << std::endl;
+    //     return false;
+    // }
 
     FT_Set_Pixel_Sizes(face, 0, 24); // Set size to load glyphs as
 
@@ -349,282 +364,77 @@ float NDCToPixel(float ndcValue, bool isRelativeToWidth) {
     }
 }
 
-void drawVerticalLine(float offset, float lineWidth, std::vector<GLfloat> color) {
+void rotateModel(glm::mat4 &modelMatrix, float x, float y, glm::vec2 offset) {
+    // Step 1: Translate to the top-left corner (rotation point)
+    modelMatrix = glm::translate(modelMatrix, glm::vec3(offset.x + x, offset.y + y, 0.0f));
+
+    // Step 2: Apply rotation (around the Z-axis)
+    modelMatrix = glm::rotate(modelMatrix, glm::radians(turnRatio), glm::vec3(0.0f, 0.0f, 1.0f));
+
+    // Step 3: Translate back to the original position
+    modelMatrix = glm::translate(modelMatrix, glm::vec3(-x, -y, 0.0f));
+}
+
+void drawSquare(glm::vec2 offset, float squareSize, std::vector<GLfloat> color) {
     if (color.size() != 4) {
         throw std::runtime_error("draw line has to have 4 elements");
     }
 
     glUseProgram(shaderProgram);
     glBindVertexArray(VAO);
-    // Set the line color
+
+    // Set the square color
     glUniform4f(glGetUniformLocation(shaderProgram, "squareColor"), color[0], color[1], color[2], color[3]);
 
-    // Apply rotation transformation
-    float cosTheta = cos(coordinateRotationAngle);
-    float sinTheta = sin(coordinateRotationAngle);
+    float halfSize = squareSize * 0.5f;
 
-    GLfloat model[] = {
-        offset + lineWidth / 2, 1.0f,
-        offset - lineWidth / 2, 1.0f,
-        offset + lineWidth / 2, -1.0f,
-        offset - lineWidth / 2, -1.0f,
+    // Define the square's vertices (centered at origin for easier transformations)
+    std::vector<GLfloat> model = {
+        -halfSize, -halfSize,  // Bottom-left
+        -halfSize, +halfSize,  // Top-left
+        +halfSize, -halfSize,  // Bottom-right
+        +halfSize, +halfSize   // Top-right
     };
 
-    // Rotate each vertex
-    for (int i = 0; i < 4; i++) {
-        float x = model[i * 2];
-        float y = model[i * 2 + 1];
-        model[i * 2] = x * cosTheta - y * sinTheta; // Rotated x
-        model[i * 2 + 1] = x * sinTheta + y * cosTheta; // Rotated y
+    // Create a transformation matrix
+    glm::mat4 modelMatrix = glm::mat4(1.0f); // Start with identity matrix
+
+    modelMatrix = glm::scale(modelMatrix, glm::vec3(k, k, 1.0f));
+
+    if (currentCorner == TopLeft) {
+        rotateModel(modelMatrix, -halfSize, halfSize, offset);
+    }
+    else if (currentCorner == BottomLeft) {
+        rotateModel(modelMatrix, -halfSize, -halfSize, offset);
+    }
+    else if (currentCorner == BottomRight) {
+        rotateModel(modelMatrix, halfSize, -halfSize, offset);
+    }
+    else if (currentCorner == TopRight) {
+        rotateModel(modelMatrix, halfSize, halfSize, offset);
     }
 
+
+
+    // Apply the transformation to the vertices
+    for (size_t i = 0; i < model.size(); i += 2) {
+        glm::vec4 vertex(model[i], model[i + 1], 0.0f, 1.0f); // Homogeneous coordinates
+        vertex = modelMatrix * vertex; // Transform the vertex
+        model[i] = vertex.x; // Update the vertex position
+        model[i + 1] = vertex.y;
+    }
+
+    // Copy the transformed vertices to a std::vector<GLfloat>
+    std::vector<GLfloat> modelArray(model.begin(), model.end());
+
+    // Upload the vertex data to the GPU
     glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(model), model, GL_DYNAMIC_DRAW);
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glBufferData(GL_ARRAY_BUFFER, modelArray.size() * sizeof(GLfloat), modelArray.data(), GL_DYNAMIC_DRAW);
+
+    // Draw the square
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, model.size() / 2);
 
     glBindVertexArray(0);
-}
-
-void drawHorizontalLine(float offset, float lineWidth, std::vector<GLfloat> color) {
-    if (color.size() != 4) {
-        throw std::runtime_error("draw line has to have 4 elements");
-    }
-
-    glUseProgram(shaderProgram);
-    glBindVertexArray(VAO);
-    // Set the line color
-    glUniform4f(glGetUniformLocation(shaderProgram, "squareColor"), color[0], color[1], color[2], color[3]);
-
-    // Apply rotation transformation
-    float cosTheta = cos(coordinateRotationAngle);
-    float sinTheta = sin(coordinateRotationAngle);
-
-    GLfloat model[] = {
-        1.0f, offset + lineWidth / 2,
-        1.0f, offset - lineWidth / 2,
-        -1.0f, offset + lineWidth / 2,
-        -1.0f, offset - lineWidth / 2,
-    };
-
-    // Rotate each vertex
-    for (int i = 0; i < 4; i++) {
-        float x = model[i * 2];
-        float y = model[i * 2 + 1];
-        model[i * 2] = x * cosTheta - y * sinTheta; // Rotated x
-        model[i * 2 + 1] = x * sinTheta + y * cosTheta; // Rotated y
-    }
-
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(model), model, GL_DYNAMIC_DRAW);
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-
-    glBindVertexArray(0);
-}
-
-void drawCoordinates() {
-    std::vector<GLfloat> lineColor = {0.1f, 0.1f, 0.1f, 1.0f};
-    float boldLineVert = pixelToNDC(2, true);
-    float normalLineVert = pixelToNDC(1, true);
-
-    float boldLineHoriz = pixelToNDC(2, false);
-    float normalLineHoriz = pixelToNDC(1, false);
-
-    int maxDimension = std::max(windowWidth, windowHeight);
-    bool isRelativeToWidth = maxDimension == windowWidth;
-
-    float pInitialPosition = static_cast<float>(windowWidth) / 2.0f;
-    const float pOffset = NDCToPixel(scale / 10.0f, isRelativeToWidth);
-    float pPosition = pInitialPosition;
-
-    drawVerticalLine(0, boldLineVert, lineColor); // Central vertical coord line
-
-    int coordsLabel = 0;
-    // Draw vertical lines
-    while (pPosition + pOffset <= static_cast<float>(windowWidth)) {
-        pPosition += pOffset;
-        float position = pixelToNDC(pPosition, isRelativeToWidth) - 1.0f;
-        drawVerticalLine(position, normalLineVert, lineColor);
-
-        // Calculate rotated text position
-        float textX = pPosition;
-        float textY = windowHeight / 2;
-        float cosTheta = cos(coordinateRotationAngle);
-        float sinTheta = sin(coordinateRotationAngle);
-
-        float centerX = windowWidth / 2.0f;
-        float centerY = windowHeight / 2.0f;
-
-        // Translate to origin
-        float translatedX = textX - centerX;
-        float translatedY = textY - centerY;
-
-        // Rotate
-        float rotatedX = translatedX * cosTheta - translatedY * sinTheta;
-        float rotatedY = translatedX * sinTheta + translatedY * cosTheta;
-
-        // Translate back
-        float finalX = rotatedX + centerX;
-        float finalY = rotatedY + centerY;
-
-
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        renderText(std::to_string(++coordsLabel), finalX, finalY, 1.0f, glm::vec3(0.1f, 0.1f, 0.1f));
-        glDisable(GL_BLEND);
-    }
-    pPosition = pInitialPosition;
-    coordsLabel = 0;
-    while (pPosition - pOffset >= 0) {
-        pPosition -= pOffset;
-        float position = pixelToNDC(pPosition, isRelativeToWidth) - 1.0f;
-        drawVerticalLine(position, normalLineVert, lineColor);
-
-        // Calculate rotated text position
-        float textX = pPosition;
-        float textY = windowHeight / 2;
-        float cosTheta = cos(coordinateRotationAngle);
-        float sinTheta = sin(coordinateRotationAngle);
-
-        float centerX = windowWidth / 2.0f;
-        float centerY = windowHeight / 2.0f;
-
-        // Translate to origin
-        float translatedX = textX - centerX;
-        float translatedY = textY - centerY;
-
-        // Rotate
-        float rotatedX = translatedX * cosTheta - translatedY * sinTheta;
-        float rotatedY = translatedX * sinTheta + translatedY * cosTheta;
-
-        // Translate back
-        float finalX = rotatedX + centerX;
-        float finalY = rotatedY + centerY;
-
-
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        renderText(std::to_string(--coordsLabel), finalX, finalY, 1.0f, glm::vec3(0.1f, 0.1f, 0.1f));
-        glDisable(GL_BLEND);
-    }
-
-    pInitialPosition = static_cast<float>(windowHeight) / 2.0f;
-    pPosition = pInitialPosition;
-    coordsLabel = 0;
-
-    drawHorizontalLine(0, boldLineHoriz, lineColor); // Central horizontal coord line
-
-    // Draw horizontal lines
-    while (pPosition + pOffset <= windowHeight) {
-        pPosition += pOffset;
-        float position = pixelToNDC(pPosition, !isRelativeToWidth) - 1.0f;
-        drawHorizontalLine(position, normalLineHoriz, lineColor);
-
-        // Calculate rotated text position
-        float textX = windowWidth / 2;
-        float textY = pPosition;
-        float cosTheta = cos(coordinateRotationAngle);
-        float sinTheta = sin(coordinateRotationAngle);
-
-
-        float centerX = windowWidth / 2.0f;
-        float centerY = windowHeight / 2.0f;
-
-        // Translate to origin
-        float translatedX = textX - centerX;
-        float translatedY = textY - centerY;
-
-        // Rotate
-        float rotatedX = translatedX * cosTheta - translatedY * sinTheta;
-        float rotatedY = translatedX * sinTheta + translatedY * cosTheta;
-
-        // Translate back
-        float finalX = rotatedX + centerX;
-        float finalY = rotatedY + centerY;
-
-
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        renderText(std::to_string(++coordsLabel), finalX, finalY, 1.0f, glm::vec3(0.1f, 0.1f, 0.1f));
-        glDisable(GL_BLEND);
-    }
-    pPosition = pInitialPosition;
-    coordsLabel = 0;
-    while (pPosition - pOffset >= 0) {
-        pPosition -= pOffset;
-        float position = pixelToNDC(pPosition, !isRelativeToWidth) - 1.0f;
-        drawHorizontalLine(position, normalLineHoriz, lineColor);
-
-        // Calculate rotated text position
-        float textX = windowWidth / 2;
-        float textY = pPosition;
-        float cosTheta = cos(coordinateRotationAngle);
-        float sinTheta = sin(coordinateRotationAngle);
-
-        float centerX = windowWidth / 2.0f;
-        float centerY = windowHeight / 2.0f;
-
-        // Translate to origin
-        float translatedX = textX - centerX;
-        float translatedY = textY - centerY;
-
-        // Rotate
-        float rotatedX = translatedX * cosTheta - translatedY * sinTheta;
-        float rotatedY = translatedX * sinTheta + translatedY * cosTheta;
-
-        // Translate back
-        float finalX = rotatedX + centerX;
-        float finalY = rotatedY + centerY;
-
-
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        renderText(std::to_string(--coordsLabel), finalX, finalY, 1.0f, glm::vec3(0.1f, 0.1f, 0.1f));
-        glDisable(GL_BLEND);
-    }
-}
-
-void drawFunction(float lineWidth, std::vector<GLfloat> color) {
-    if (color.size() != 4) {
-        throw std::runtime_error("draw line has to have 4 elements");
-    }
-
-    // Set the line width
-    glLineWidth(lineWidth);
-
-    // Enable line antialiasing (optional)
-    glEnable(GL_LINE_SMOOTH);
-    glHint(GL_LINE_SMOOTH_HINT, GL_NICEST);
-
-    glUseProgram(shaderProgram);
-    glBindVertexArray(VAO);
-    // Set the line color
-    glUniform4f(glGetUniformLocation(shaderProgram, "squareColor"), color[0], color[1], color[2], color[3]);
-
-    std::vector<GLfloat> model;
-
-    float x = 0.0f;
-    float y = 0.0f;
-    for (float i = -1.0f; i < 1.000009f; i += approxStep) {
-        x = i;
-        y = a * x;
-
-        model.push_back(x);
-        model.push_back(y);
-    }
-
-    GLfloat modelArray[model.size()];
-    std::copy(model.begin(), model.end(), modelArray);
-
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(modelArray), modelArray, GL_DYNAMIC_DRAW);
-
-    // Use GL_LINE_STRIP to draw a continuous line
-    glDrawArrays(GL_LINE_STRIP, 0, model.size() / 2);
-
-    glBindVertexArray(0);
-
-    // Disable line antialiasing (optional)
-    glDisable(GL_LINE_SMOOTH);
 }
 
 void handleKeyboardInput(GLFWwindow* window) {
@@ -656,7 +466,7 @@ void handleKeyboardInput(GLFWwindow* window) {
     if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) {
         if (!qPressed) {
             a += 0.1f;
-            coordinateRotationAngle -= 0.1f;
+            turnRatio -= 0.1f;
             qPressed = true;
         }
     } else {
@@ -666,7 +476,7 @@ void handleKeyboardInput(GLFWwindow* window) {
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
         if (!wPressed) {
             a -= 0.1f;
-            coordinateRotationAngle += 0.1f;
+            turnRatio += 0.1f;
             wPressed = true;
         }
     } else {
@@ -685,20 +495,61 @@ void handleKeyboardInput(GLFWwindow* window) {
 
 // Main loop for handling events and rendering
 void mainLoop(GLFWwindow* window) {
+    auto lastFrame = static_cast<float>(glfwGetTime());
+
     while (!glfwWindowShouldClose(window)) {
+        const auto currentFrame = static_cast<float>(glfwGetTime());
+        const float deltaTime = currentFrame - lastFrame;
+        lastFrame = currentFrame;
+
         glClear(GL_COLOR_BUFFER_BIT);
 
         glfwGetFramebufferSize(glfwGetCurrentContext(), &windowWidth, &windowHeight);
 
         handleKeyboardInput(window);
 
-        drawCoordinates();
-        drawFunction(50.0f, {1.0f, 0.0f, 0.0f, 1.0f});
+        drawSquare({0.0f, 0.0f}, 0.3f, {1.0f, 0.0f, 0.0f, 1.0f});
 
         if (playAnimation) {
-            a -= 0.001f;
-            coordinateRotationAngle += 0.001f;
+            turnRatio += 75.0f * deltaTime;
+
+            if (k < 0.5f) {
+                k = 0.5f;
+                increase = true;
+            }
+            if (k > 2.0f) {
+                k = 2.0f;
+                increase = false;
+            }
+
+            if (increase) {
+                k += 0.1f * deltaTime;
+            } else if (!increase) {
+                k -= 0.1f * deltaTime;
+            }
+
         }
+
+        if (turnRatio >= 360 * 4) {
+            turnRatio = 0.0f;
+            currentCorner = static_cast<ECorner>(1);
+        }
+
+        if (turnRatio / 360 > static_cast<float>(currentCorner)) {
+            currentCorner = static_cast<ECorner>(currentCorner + 1);
+        }
+
+        std::string ratioString = "Turn ratio: " + std::to_string(turnRatio);
+        std::string cornerString = "Current corner: " + std::to_string(currentCorner);
+        std::string scaleString = "Scale: " + std::to_string(k);
+        std::string increaseString = "Increase: " + std::to_string(increase);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        renderText(ratioString, NDCToPixel(0.05f, true), NDCToPixel(1.9f, false), 1.5f, {0.0f, 0.5f, 0.5f});
+        renderText(cornerString, NDCToPixel(0.05f, true), NDCToPixel(1.8f, false), 1.5f, {0.0f, 0.5f, 0.5f});
+        renderText(scaleString, NDCToPixel(0.05f, true), NDCToPixel(1.7f, false), 1.5f, {0.0f, 0.5f, 0.5f});
+        renderText(increaseString, NDCToPixel(0.05f, true), NDCToPixel(1.6f, false), 1.5f, {0.0f, 0.5f, 0.5f});
+        glDisable(GL_BLEND);
 
         glfwSwapBuffers(window);
         glfwPollEvents();

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.30)
-project(Lab3)
+project(Lab4)
 
 set(CMAKE_CXX_STANDARD 20)
 
@@ -30,9 +30,9 @@ if(APPLE)
             ${FREETYPE_LIBRARY_DIRS}
     )
 
-    add_executable(Lab3 main.cpp)
+    add_executable(Lab4 main.cpp)
     target_link_libraries(
-            Lab3
+            Lab4
             ${GLEW_LIBRARIES}
             ${GLFW_LIBRARIES}
             ${OPENGL_gl_LIBRARY}
@@ -62,16 +62,16 @@ if(WIN32)
             ${GLM_INCLUDE_DIR}
     )
 
-    # Add link directories if needed
-#    link_directories(
-#            "C:/OpenGLLibraries/glew/lib/Release/x64"
-#            "C:/OpenGLLibraries/glfw/build/src/Debug"
-#            "C:/OpenGLLibraries/freetype/objs"
-#    )
+#     Add link directories if needed
+        link_directories(
+                "C:/OpenGLLibraries/glew/lib/Release/x64"
+                "C:/OpenGLLibraries/glfw/build/src/Debug"
+                "C:/OpenGLLibraries/freetype/objs"
+        )
 
-    add_executable(Lab3 main.cpp)
+    add_executable(Lab4 main.cpp)
     target_link_libraries(
-            Lab3
+            Lab4
             ${GLEW_LIBRARY}
             ${GLFW_LIBRARY}
             ${FREETYPE_LIBRARY}
