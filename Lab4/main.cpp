@@ -91,6 +91,9 @@ Camera camera = {
     0.1f  // Setting sensitivity
 };
 
+bool usePerspective = true;
+float orthogonalSize = 10.0f;
+
 int binomialCoef(int n, int k);
 
 void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
@@ -152,15 +155,14 @@ void generateBezierPlane(std::vector<float>& vertices, std::vector<unsigned int>
         { glm::vec3(-size, 0.0f, size), glm::vec3(-size/3, 0.5f, size), glm::vec3(size/3, 0.5f, size), glm::vec3(size, 0.0f, size) }
     };
 
-    // Specialized Bernstein polynomial calculator for cubic bezier (n=3)
     auto bernstein3 = [](int i, float t) {
         float u = 1.0f - t;
 
         switch (i) {
-            case 0: return u * u * u;           // (1-t)³
-            case 1: return 3.0f * u * u * t;    // 3(1-t)²t
-            case 2: return 3.0f * u * t * t;    // 3(1-t)t²
-            case 3: return t * t * t;           // t³
+            case 0: return u * u * u;
+            case 1: return 3.0f * u * u * t;
+            case 2: return 3.0f * u * t * t;
+            case 3: return t * t * t;
             default: return 0.0f;
         }
     };
@@ -349,7 +351,6 @@ void generateBezierPlane(std::vector<float>& vertices, std::vector<unsigned int>
 }
 
 
-// Improved binomial coefficient calculation using an iterative approach
 int binomialCoef(int n, int k) {
     // C(n,k) = C(n,n-k)
     if (k > n - k)
@@ -358,7 +359,6 @@ int binomialCoef(int n, int k) {
     if (k == 0)
         return 1;
 
-    // Calculate using multiplicative formula
     int result = 1;
     for (int i = 0; i < k; ++i) {
         result *= (n - i);
@@ -368,7 +368,6 @@ int binomialCoef(int n, int k) {
     return result;
 }
 
-// Updated sphere generation to include normals for lighting
 void generateSphereVertices(std::vector<float>& vertices, float radius, unsigned int sectorCount, unsigned int stackCount) {
     float x, y, z, xy;
     float nx, ny, nz;
@@ -467,6 +466,8 @@ GLuint createShaderProgram() {
 }
 
 void processInput(GLFWwindow *window, Camera &camera) {
+    static bool fPressed = false;
+
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
         glfwSetWindowShouldClose(window, true);
 
@@ -486,6 +487,14 @@ void processInput(GLFWwindow *window, Camera &camera) {
         camera.position += camera.up * speed;
     if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS)
         camera.position -= camera.up * speed;
+    if (glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS) {
+        if (!fPressed) {
+            usePerspective = !usePerspective;
+            fPressed = true;
+        }
+    } else {
+        fPressed = false;
+    }
 }
 
 glm::mat4 getViewMatrix(const Camera &camera) {
@@ -597,7 +606,15 @@ int main() {
         glUniform3fv(glGetUniformLocation(shaderProgram, "lightColor"), 1, glm::value_ptr(lightColor));
 
         glm::mat4 view = getViewMatrix(camera);
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
+        glm::mat4 projection;
+        if (usePerspective) {
+            projection = glm::perspective(glm::radians(45.0f), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
+        }
+        else {
+            float aspectRatio = (float)SCR_WIDTH / (float)SCR_HEIGHT;
+            float halfSize = orthogonalSize / 2.0f;
+            projection = glm::ortho(-halfSize * aspectRatio, halfSize * aspectRatio, -halfSize, halfSize, 0.1f, 100.0f);
+        }
 
         GLuint viewLoc = glGetUniformLocation(shaderProgram, "view");
         GLuint projectionLoc = glGetUniformLocation(shaderProgram, "projection");
@@ -623,7 +640,7 @@ int main() {
         glUniform3fv(glGetUniformLocation(shaderProgram, "objectColor"), 1, glm::value_ptr(sphereColor));
 
         glBindVertexArray(sphereVAO);
-        glDrawElements(GL_TRIANGLES, sphereIndices.size(), GL_UNSIGNED_INT, 0);
+        glDrawElements(GL_LINE_STRIP, sphereIndices.size(), GL_UNSIGNED_INT, 0);
 
         // Draw Bezier plane with hole
         glm::mat4 planeModel = glm::mat4(1.0f);
