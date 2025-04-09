@@ -73,7 +73,8 @@ if(WIN32)
                 "C:/OpenGLLibraries/freeglut/cmake-build-debug"
         )
 
-    add_executable(Lab5 main.cpp)
+    add_executable(Lab5 main.cpp
+            ELightSources.h)
     target_link_libraries(
             Lab5
             ${GLEW_LIBRARY}

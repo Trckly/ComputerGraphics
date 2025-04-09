@@ -8,7 +8,14 @@
 #include <chrono>
 
 #define STB_IMAGE_IMPLEMENTATION
+#include "ELightSources.h"
 #include "stb_image.h"
+
+// Light IDs (OpenGL has GL_LIGHT0 to GL_LIGHT7)
+#define AMBIENT_LIGHT    GL_LIGHT0
+#define POINT_LIGHT      GL_LIGHT1
+#define DIRECTIONAL_LIGHT GL_LIGHT2
+#define SPOTLIGHT        GL_LIGHT3
 
 // Змінні для контролю обертання та масштабування
 GLfloat planetRotation = 0.0f;         // Обертання планети навколо своєї осі
@@ -21,7 +28,8 @@ GLuint starTexture;
 GLuint moonTexture;
 
 // Параметри для туману
-GLfloat fogColor[4] = {0.0f, 0.0f, 0.02f, 1.0f};
+GLfloat fogColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+bool enableFog = false;
 
 // Змінна для контролю анімації
 bool animationActive = true;
@@ -60,7 +68,7 @@ const double TARGET_FPS = 60.0;
 const double FRAME_TIME = 1.0 / TARGET_FPS;
 
 // Константи осі планет
-const double AXIS_ANGLE = 35.5f;
+const double AXIS_ANGLE = 23.5f;
 
 bool keyStates[256] = { false };
 
@@ -145,28 +153,10 @@ GLuint createFallbackTexture(const char* filename) {
     for(int i = 0; i < size; i++) {
         for(int j = 0; j < size; j++) {
             int c = ((i & 0x8) == 0 ^ (j & 0x8) == 0) * 255;
-
-            // For moon texture - gray tones
-            if (strstr(filename, "moon") != NULL) {
-                checkerboard[i][j][0] = c * 0.7;
-                checkerboard[i][j][1] = c * 0.7;
-                checkerboard[i][j][2] = c * 0.7;
-                checkerboard[i][j][3] = 255;
-            }
-            // For star - yellow tones
-            else if (strstr(filename, "star") != NULL || strstr(filename, "sun") != NULL) {
-                checkerboard[i][j][0] = 255;
-                checkerboard[i][j][1] = 255 - (c / 3);
-                checkerboard[i][j][2] = 100 - (c / 5);
-                checkerboard[i][j][3] = 255;
-            }
-            // Default - purple/magenta error pattern
-            else {
-                checkerboard[i][j][0] = c;
-                checkerboard[i][j][1] = 0;
-                checkerboard[i][j][2] = c;
-                checkerboard[i][j][3] = 255;
-            }
+            checkerboard[i][j][0] = c;
+            checkerboard[i][j][1] = 0;
+            checkerboard[i][j][2] = c;
+            checkerboard[i][j][3] = 255;
         }
     }
 
@@ -179,6 +169,9 @@ GLuint createFallbackTexture(const char* filename) {
 
 // Функція ініціалізації
 void init(void) {
+    glEnable(GL_LIGHTING);
+    glEnable(GL_NORMALIZE);  // For proper lighting calculations
+
     // Колір фону - чорний (космос)
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 
@@ -196,8 +189,8 @@ void init(void) {
     // Налаштування матеріалу за замовчуванням
     GLfloat mat_ambient[] = {0.7f, 0.7f, 0.7f, 1.0f};
     GLfloat mat_diffuse[] = {0.8f, 0.8f, 0.8f, 1.0f};
-    GLfloat mat_specular[] = {1.0f, 1.0f, 1.0f, 1.0f};
-    GLfloat mat_shininess[] = {100.0f};
+    GLfloat mat_specular[] = {0.1f, 0.1f, 0.1f, 1.0f};
+    GLfloat mat_shininess[] = {15.0f};
 
     glMaterialfv(GL_FRONT, GL_AMBIENT, mat_ambient);
     glMaterialfv(GL_FRONT, GL_DIFFUSE, mat_diffuse);
@@ -205,15 +198,14 @@ void init(void) {
     glMaterialfv(GL_FRONT, GL_SHININESS, mat_shininess);
 
     // Завантаження текстур
-    moonTexture = loadTexture("..\\Textures\\moon-texture.txt");
+    moonTexture = loadTexture("..\\Textures\\moon-texture.jpg");
     starTexture = loadTexture("..\\Textures\\star_texture.jpg");
 
     // Налаштування туману для космічного простору
-    glEnable(GL_FOG);
-    glFogi(GL_FOG_MODE, GL_EXP2);
+    glFogi(GL_FOG_MODE, GL_EXP);
     glFogfv(GL_FOG_COLOR, fogColor);
     glFogf(GL_FOG_DENSITY, 0.05f);
-    glHint(GL_FOG_HINT, GL_NICEST);
+    glHint(GL_FOG_HINT, GL_DONT_CARE);
 
     // Ініціалізація часу
     previousTime = getTimeInSeconds();
@@ -221,11 +213,14 @@ void init(void) {
 
 // Функція малювання зорі
 void drawStar() {
-    // Відключаємо освітлення для самої зорі, щоб вона світилася рівномірно
-    glDisable(GL_LIGHTING);
 
-    // Жовтуватий колір для зорі
-    glColor3f(1.0f, 1.0f, 1.0f);
+    glPushAttrib(GL_LIGHTING_BIT);
+
+    // Відключаємо освітлення для самої зорі, щоб вона світилася рівномірно
+    if (glIsEnabled(POINT_LIGHT)) {
+        GLfloat mat_emission[] = {1.0f, 1.0f, 1.0f, 1.0f};  // Bright white emission
+        glMaterialfv(GL_FRONT, GL_EMISSION, mat_emission);
+    }
 
     // Накладаємо текстуру зорі
     glEnable(GL_TEXTURE_2D);
@@ -245,24 +240,7 @@ void drawStar() {
 
     glDisable(GL_TEXTURE_2D);
 
-    // Джерело світла розташоване в центрі зорі
-    GLfloat light_position[] = {0.0f, 0.0f, 0.0f, 1.0f};
-    GLfloat light_ambient[] = {0.2f, 0.2f, 0.0f, 1.0f};
-    GLfloat light_diffuse[] = {1.0f, 1.0f, 0.0f, 1.0f};
-    GLfloat light_specular[] = {1.0f, 1.0f, 0.0f, 1.0f};
-
-    glLightfv(GL_LIGHT0, GL_POSITION, light_position);
-    glLightfv(GL_LIGHT0, GL_AMBIENT, light_ambient);
-    glLightfv(GL_LIGHT0, GL_DIFFUSE, light_diffuse);
-    glLightfv(GL_LIGHT0, GL_SPECULAR, light_specular);
-
-    // Затухання світла з відстанню
-    glLightf(GL_LIGHT0, GL_CONSTANT_ATTENUATION, 1.0f);
-    glLightf(GL_LIGHT0, GL_LINEAR_ATTENUATION, 0.0f);
-    glLightf(GL_LIGHT0, GL_QUADRATIC_ATTENUATION, 0.0001f);
-
-    glEnable(GL_LIGHT0);
-    glEnable(GL_LIGHTING);
+    glPopAttrib();
 }
 
 // Функція малювання планети з місячною поверхнею
@@ -278,7 +256,6 @@ void drawPlanet() {
 
     glRotatef(90.0f, 1.0f, 0.0f, 0.0f);
 
-    glRotatef(AXIS_ANGLE, 0.0f, 0.0f, 1.0f);
 
     // Малюємо сферу для планети
     GLUquadricObj *quadric = gluNewQuadric();
@@ -323,6 +300,63 @@ void renderText(float x, float y, const char* text, void* font = GLUT_BITMAP_HEL
     glEnable(GL_LIGHTING);
 }
 
+void lightUpdate() {
+    // Ambient light
+    GLfloat ambientColor[] = {0.9f, 0.9f, 0.9f, 1.0f};
+    glLightfv(AMBIENT_LIGHT, GL_AMBIENT, ambientColor);
+
+    // Point light
+    // Джерело світла розташоване в центрі зорі
+    GLfloat point_light_position[] = {0.0f, 0.0f, 0.0f, 1.0f};
+    GLfloat point_light_ambient[] = {0.0f, 0.0f, 0.0f, 1.0f};
+    GLfloat point_light_diffuse[] = {1.0f, 1.0f, 1.0f, 1.0f};
+    GLfloat point_light_specular[] = {1.0f, 1.0f, 1.0f, 1.0f};
+
+    glLightfv(POINT_LIGHT, GL_POSITION, point_light_position);
+    glLightfv(POINT_LIGHT, GL_AMBIENT, point_light_ambient);
+    glLightfv(POINT_LIGHT, GL_DIFFUSE, point_light_diffuse);
+    glLightfv(POINT_LIGHT, GL_SPECULAR, point_light_specular);
+
+    // Затухання світла з відстанню
+    glLightf(POINT_LIGHT, GL_CONSTANT_ATTENUATION, 1.0f);
+    glLightf(POINT_LIGHT, GL_LINEAR_ATTENUATION, 0.0f);
+    glLightf(POINT_LIGHT, GL_QUADRATIC_ATTENUATION, 0.0001f);
+
+
+    // Directional light
+    GLfloat directional_light_position[] = {1.0f, 1.0f, 0.0f, 0.0f};
+    GLfloat directional_light_ambient[] = {0.0f, 0.0f, 0.0f, 1.0f};
+    GLfloat directional_light_diffuse[] = {1.0f, 1.0f, 1.0f, 1.0f};
+    GLfloat directional_light_specular[] = {1.0f, 1.0f, 1.0f, 1.0f};
+
+    glLightfv(DIRECTIONAL_LIGHT, GL_POSITION, directional_light_position);
+    glLightfv(DIRECTIONAL_LIGHT, GL_AMBIENT, directional_light_ambient);
+    glLightfv(DIRECTIONAL_LIGHT, GL_DIFFUSE, directional_light_diffuse);
+    glLightfv(DIRECTIONAL_LIGHT, GL_SPECULAR, directional_light_specular);
+    // Затухання світла з відстанню
+    glLightf(DIRECTIONAL_LIGHT, GL_CONSTANT_ATTENUATION, 1.0f);
+    glLightf(DIRECTIONAL_LIGHT, GL_LINEAR_ATTENUATION, 0.0f);
+    glLightf(DIRECTIONAL_LIGHT, GL_QUADRATIC_ATTENUATION, 0.0f);
+
+    GLfloat spotlight_position[] = {0.0f, 100.0f, 0.0f, 1.0f};
+    GLfloat spotlight_direction[] = {0.0f, -1.0f, 0.0f};
+    GLfloat spotlight_ambient[] = {0.0f, 0.0f, 0.0f, 1.0f};
+    GLfloat spotlight_diffuse[] = {1.0f, 1.0f, 1.0f, 1.0f};
+    GLfloat spotlight_specular[] = {1.0f, 1.0f, 1.0f, 1.0f};
+
+    glLightfv(SPOTLIGHT, GL_POSITION, spotlight_position);
+    glLightfv(SPOTLIGHT, GL_SPOT_DIRECTION, spotlight_direction);
+    glLightfv(SPOTLIGHT, GL_AMBIENT, spotlight_ambient);
+    glLightfv(SPOTLIGHT, GL_DIFFUSE, spotlight_diffuse);
+    glLightfv(SPOTLIGHT, GL_SPECULAR, spotlight_specular);
+    // Затухання світла з відстанню
+    glLightf(SPOTLIGHT, GL_SPOT_CUTOFF, 2.0f);
+    glLightf(SPOTLIGHT, GL_SPOT_EXPONENT, 70.0f);
+    glLightf(SPOTLIGHT, GL_CONSTANT_ATTENUATION, 1.0f);
+    glLightf(SPOTLIGHT, GL_LINEAR_ATTENUATION, 0.0f);
+    glLightf(SPOTLIGHT, GL_QUADRATIC_ATTENUATION, 0.0001f);
+}
+
 // Функція малювання сцени
 void display(void) {
     // Вимірювання часу для розрахунку deltaTime
@@ -352,6 +386,8 @@ void display(void) {
     if (deltaTime > 0) {
         fps = 1.0 / deltaTime;
     }
+
+    lightUpdate();
 
     // Continue with rendering regardless of FPS
     updateMovement();
@@ -387,11 +423,11 @@ void display(void) {
     // Відстань від зорі
     glTranslatef(8.0f, 0.0f, 0.0f);
 
+    // Нахил осі планети
+    glRotatef(-AXIS_ANGLE, 0.0f, 0.0f, 1.0f);
+
     // Обертання планети навколо своєї осі
     glRotatef(planetRotation, 0.0f, 1.0f, 0.0f);
-
-    // Нахил осі планети
-    glRotatef(AXIS_ANGLE, 0.0f, 0.0f, 1.0f);
 
     drawPlanet();
     glPopMatrix();
@@ -652,8 +688,38 @@ void keyboardUp(unsigned char key, int x, int y) {
                 glutSetCursor(GLUT_CURSOR_INHERIT); // Показати курсор
             }
             break;
+        case '1': // Фонове освітлення
+            glEnable(AMBIENT_LIGHT);
+            glDisable(POINT_LIGHT);
+            glDisable(DIRECTIONAL_LIGHT);
+            glDisable(SPOTLIGHT);
+            break;
+        case '2':
+            glDisable(AMBIENT_LIGHT);
+            glEnable(POINT_LIGHT);
+            glDisable(DIRECTIONAL_LIGHT);
+            glDisable(SPOTLIGHT);
+            break;
+        case '3':
+            glDisable(AMBIENT_LIGHT);
+            glDisable(POINT_LIGHT);
+            glEnable(DIRECTIONAL_LIGHT);
+            glDisable(SPOTLIGHT);
+            break;
+        case '4':
+            glDisable(AMBIENT_LIGHT);
+            glDisable(POINT_LIGHT);
+            glDisable(DIRECTIONAL_LIGHT);
+            glEnable(SPOTLIGHT);
+            break;
+        case '5':
+            enableFog = !enableFog;
+            if (enableFog)
+                glEnable(GL_FOG);
+            else
+                glDisable(GL_FOG);
+            break;
     }
-
     glutPostRedisplay();
 }
 
@@ -694,7 +760,7 @@ int main(int argc, char** argv) {
     glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH);
 
     // Розмір вікна
-    glutInitWindowSize(800, 600);
+    glutInitWindowSize(2048, 1024);
 
     // Позиція вікна
     glutInitWindowPosition(100, 100);
