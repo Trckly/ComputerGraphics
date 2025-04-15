@@ -27,11 +27,6 @@
 #define MENU_TOGGLE_ANIMATION 9
 #define MENU_EXIT 10
 
-// Глобальні змінні
-GLfloat planetRotation = 0.0f;         // Обертання планети навколо своєї осі
-GLfloat planetRevolution = 0.0f;       // Обертання планети навколо зірки
-GLfloat zoomFactor = -20.0f;           // Рівень масштабування сцени
-
 // Ідентифікатори текстур
 GLuint starTexture;
 GLuint moonTexture;
@@ -41,7 +36,7 @@ float cameraX = 0.0f, cameraY = 0.0f, cameraZ = 20.0f;
 
 // Часові параметри анімації
 double currentTime = 0.0, previousTime = 0.0, deltaTime = 0.0;
-float rotationSpeed = 60.0f;  // градусів за секунду (базова швидкість)
+float rotationSpeed = 30.0f;  // градусів за секунду (базова швидкість)
 float moveSpeed = 5.0f;      // одиниць за секунду (базова швидкість)
 bool animationActive = true;
 
@@ -57,17 +52,17 @@ bool secondLightEnabled = false;
 bool thirdLightEnabled = false;
 
 // Межі сцени
-const float sceneBounds[6] = {-15.0f, 15.0f, -10.0f, 10.0f, -15.0f, 15.0f}; // xmin, xmax, ymin, ymax, zmin, zmax
+constexpr float sceneBounds[6] = {-15.0f, 15.0f, -10.0f, 10.0f, -15.0f, 15.0f}; // xmin, xmax, ymin, ymax, zmin, zmax
 
 // Структура для об'єкта з ламаною траєкторією
 struct MovingObject {
     float x, y, z;        // Позиція
     float dx, dy, dz;     // Напрямок/швидкість
-    float size;           // Розмір
+    float size;
     float rotX, rotY, rotZ; // Кути обертання
 
     // Ініціалізація з випадковою позицією та напрямком
-    MovingObject() {
+    explicit MovingObject(const float newSize) {
         x = (float)rand() / RAND_MAX * 10.0f - 5.0f; // -5 до 5
         y = (float)rand() / RAND_MAX * 6.0f - 3.0f;  // -3 до 3
         z = (float)rand() / RAND_MAX * 10.0f - 5.0f; // -5 до 5
@@ -80,12 +75,12 @@ struct MovingObject {
         float len = sqrt(dx*dx + dy*dy + dz*dz);
         dx /= len; dy /= len; dz /= len;
 
-        size = 0.3f + (float)rand() / RAND_MAX * 0.5f; // 0.3 до 0.8
+        size = newSize;
         rotX = rotY = rotZ = 0.0f;
     }
 
     // Оновлення позиції із відбиванням від меж
-    void update(float speed, float deltaTime) {
+    void update(float speed, float rotation, float deltaTime) {
         // Оновлення позиції
         x += dx * speed * deltaTime;
         y += dy * speed * deltaTime;
@@ -97,6 +92,7 @@ struct MovingObject {
             dx = -dx;
             // Зміна напрямку (для ламаної траєкторії)
             if (rand() % 4 == 0) {
+                // Додаються невеликі випадкові значення від -0.2 до 0.2
                 dy += ((float)rand() / RAND_MAX * 0.4f - 0.2f);
                 dz += ((float)rand() / RAND_MAX * 0.4f - 0.2f);
                 // Нормалізація
@@ -132,14 +128,15 @@ struct MovingObject {
         }
 
         // Оновлення обертання
-        rotX += 15.0f * deltaTime;
-        rotY += 20.0f * deltaTime;
-        rotZ += 10.0f * deltaTime;
+        // rotX += static_cast<float>(rand()) / RAND_MAX * rotation * deltaTime;
+        rotX += 5.0f * rotation * deltaTime;
+        rotY += 2.0f * rotation * deltaTime;
+        rotZ += 1.0f * rotation * deltaTime;
     }
 };
 
-// Вектор для об'єктів з ламаною траєкторією
-std::vector<MovingObject> movingObjects;
+auto sun = MovingObject(4.0f);
+auto moon = MovingObject(1.6f);
 
 // Прототипи функцій
 GLuint loadTexture(const char* filename);
@@ -201,25 +198,9 @@ void init(void) {
     GLfloat global_ambient[] = {0.1f, 0.1f, 0.1f, 1.0f};
     glLightModelfv(GL_LIGHT_MODEL_AMBIENT, global_ambient);
 
-    // Параметри матеріалу за замовчуванням
-    GLfloat mat_ambient[] = {0.7f, 0.7f, 0.7f, 1.0f};
-    GLfloat mat_diffuse[] = {0.8f, 0.8f, 0.8f, 1.0f};
-    GLfloat mat_specular[] = {0.1f, 0.1f, 0.1f, 1.0f};
-    GLfloat mat_shininess[] = {15.0f};
-
-    glMaterialfv(GL_FRONT, GL_AMBIENT, mat_ambient);
-    glMaterialfv(GL_FRONT, GL_DIFFUSE, mat_diffuse);
-    glMaterialfv(GL_FRONT, GL_SPECULAR, mat_specular);
-    glMaterialfv(GL_FRONT, GL_SHININESS, mat_shininess);
-
     // Завантаження текстур
     moonTexture = loadTexture("..\\Textures\\moon-texture.jpg");
     starTexture = loadTexture("..\\Textures\\star_texture.jpg");
-
-    // Створення рухомих об'єктів
-    for (int i = 0; i < 10; i++) {
-        movingObjects.push_back(MovingObject());
-    }
 
     // Створення контекстного меню
     createMenu();
@@ -263,7 +244,7 @@ void setupLighting() {
     glLightf(SECOND_LIGHT, GL_QUADRATIC_ATTENUATION, 0.001f);
 
     // Третє світло (синє)
-    GLfloat light3_position[] = {10.0f, -8.0f, -5.0f, 1.0f};
+    GLfloat light3_position[] = {10.0f, -8.0f, -5.0f, 0.0f};
     GLfloat light3_ambient[] = {0.0f, 0.0f, 0.05f, 1.0f};
     GLfloat light3_diffuse[] = {0.2f, 0.2f, 1.0f, 1.0f};
     GLfloat light3_specular[] = {0.4f, 0.4f, 1.0f, 1.0f};
@@ -290,11 +271,21 @@ void setupLighting() {
 }
 
 // Малювання зірки
-void drawStar() {
+void drawStar(const MovingObject& obj) {
     glPushAttrib(GL_LIGHTING_BIT);
 
+    GLfloat light_position[] = {obj.x, obj.y, obj.z, 1.0f};
+    glLightfv(MAIN_LIGHT, GL_POSITION, light_position);
+
     // Зробити зірку самосвітною
+    GLfloat mat_ambient[] = {0.7f, 0.7f, 0.7f, 1.0f};
+    GLfloat mat_diffuse[] = {0.8f, 0.8f, 0.8f, 1.0f};
+    GLfloat mat_specular[] = {0.1f, 0.1f, 0.1f, 1.0f};
     GLfloat mat_emission[] = {1.0f, 0.9f, 0.5f, 1.0f};
+
+    glMaterialfv(GL_FRONT, GL_AMBIENT, mat_ambient);
+    glMaterialfv(GL_FRONT, GL_DIFFUSE, mat_diffuse);
+    glMaterialfv(GL_FRONT, GL_SPECULAR, mat_specular);
     glMaterialfv(GL_FRONT, GL_EMISSION, mat_emission);
 
     // Застосування текстури зірки
@@ -302,12 +293,15 @@ void drawStar() {
     glBindTexture(GL_TEXTURE_2D, starTexture);
 
     glPushMatrix();
-    glRotatef(90.0f, 1.0f, 0.0f, 0.0f);
+    glTranslatef(obj.x, obj.y, obj.z);
+    glRotatef(obj.rotX, 1.0f, 0.0f, 0.0f);
+    glRotatef(obj.rotY, 0.0f, 1.0f, 0.0f);
+    glRotatef(obj.rotZ, 0.0f, 0.0f, 1.0f);
 
     // Малювання сфери зірки
     GLUquadricObj *quadric = gluNewQuadric();
     gluQuadricTexture(quadric, GL_TRUE);
-    gluSphere(quadric, 2.0f, 30, 30);
+    gluSphere(quadric, obj.size / 2.0f, 30, 30);
     gluDeleteQuadric(quadric);
 
     glPopMatrix();
@@ -316,7 +310,7 @@ void drawStar() {
 }
 
 // Малювання планети
-void drawPlanet() {
+void drawPlanet(const MovingObject& obj) {
     glPushAttrib(GL_LIGHTING_BIT);
 
     // Встановлення матеріалу планети
@@ -336,90 +330,19 @@ void drawPlanet() {
     glBindTexture(GL_TEXTURE_2D, moonTexture);
 
     glPushMatrix();
-    glRotatef(90.0f, 1.0f, 0.0f, 0.0f);
-
-    // Створення сфери планети
-    GLUquadricObj *quadric = gluNewQuadric();
-    gluQuadricTexture(quadric, GL_TRUE);
-    gluSphere(quadric, 0.8f, 20, 20);
-    gluDeleteQuadric(quadric);
-
-    glPopMatrix();
-    glDisable(GL_TEXTURE_2D);
-    glPopAttrib();
-}
-
-// Малювання рухомого об'єкта
-void drawMovingObject(const MovingObject& obj) {
-    glPushAttrib(GL_LIGHTING_BIT);
-
-    // Різні кольори для різних об'єктів
-    GLfloat r = 0.3f + ((float)(&obj - &movingObjects[0]) / movingObjects.size()) * 0.7f;
-    GLfloat g = 0.8f - ((float)(&obj - &movingObjects[0]) / movingObjects.size()) * 0.5f;
-    GLfloat b = ((float)(&obj - &movingObjects[0]) / movingObjects.size()) * 0.8f;
-
-    GLfloat mat_ambient[] = {r * 0.4f, g * 0.4f, b * 0.4f, 1.0f};
-    GLfloat mat_diffuse[] = {r, g, b, 1.0f};
-    GLfloat mat_specular[] = {0.8f, 0.8f, 0.8f, 1.0f};
-    GLfloat mat_shininess[] = {40.0f};
-
-    glMaterialfv(GL_FRONT, GL_AMBIENT, mat_ambient);
-    glMaterialfv(GL_FRONT, GL_DIFFUSE, mat_diffuse);
-    glMaterialfv(GL_FRONT, GL_SPECULAR, mat_specular);
-    glMaterialfv(GL_FRONT, GL_SHININESS, mat_shininess);
-
-    glPushMatrix();
     glTranslatef(obj.x, obj.y, obj.z);
     glRotatef(obj.rotX, 1.0f, 0.0f, 0.0f);
     glRotatef(obj.rotY, 0.0f, 1.0f, 0.0f);
     glRotatef(obj.rotZ, 0.0f, 0.0f, 1.0f);
 
-    // Малювання об'єкта (октаедр)
-    glBegin(GL_TRIANGLES);
-    // Верхня частина
-    glNormal3f(0.0f, 1.0f, 0.0f);
-    glVertex3f(0.0f, obj.size, 0.0f);
-    glVertex3f(-obj.size, 0.0f, 0.0f);
-    glVertex3f(0.0f, 0.0f, obj.size);
-
-    glNormal3f(0.0f, 1.0f, 0.0f);
-    glVertex3f(0.0f, obj.size, 0.0f);
-    glVertex3f(0.0f, 0.0f, obj.size);
-    glVertex3f(obj.size, 0.0f, 0.0f);
-
-    glNormal3f(0.0f, 1.0f, 0.0f);
-    glVertex3f(0.0f, obj.size, 0.0f);
-    glVertex3f(obj.size, 0.0f, 0.0f);
-    glVertex3f(0.0f, 0.0f, -obj.size);
-
-    glNormal3f(0.0f, 1.0f, 0.0f);
-    glVertex3f(0.0f, obj.size, 0.0f);
-    glVertex3f(0.0f, 0.0f, -obj.size);
-    glVertex3f(-obj.size, 0.0f, 0.0f);
-
-    // Нижня частина
-    glNormal3f(0.0f, -1.0f, 0.0f);
-    glVertex3f(0.0f, -obj.size, 0.0f);
-    glVertex3f(-obj.size, 0.0f, 0.0f);
-    glVertex3f(0.0f, 0.0f, obj.size);
-
-    glNormal3f(0.0f, -1.0f, 0.0f);
-    glVertex3f(0.0f, -obj.size, 0.0f);
-    glVertex3f(0.0f, 0.0f, obj.size);
-    glVertex3f(obj.size, 0.0f, 0.0f);
-
-    glNormal3f(0.0f, -1.0f, 0.0f);
-    glVertex3f(0.0f, -obj.size, 0.0f);
-    glVertex3f(obj.size, 0.0f, 0.0f);
-    glVertex3f(0.0f, 0.0f, -obj.size);
-
-    glNormal3f(0.0f, -1.0f, 0.0f);
-    glVertex3f(0.0f, -obj.size, 0.0f);
-    glVertex3f(0.0f, 0.0f, -obj.size);
-    glVertex3f(-obj.size, 0.0f, 0.0f);
-    glEnd();
+    // Створення сфери планети
+    GLUquadricObj *quadric = gluNewQuadric();
+    gluQuadricTexture(quadric, GL_TRUE);
+    gluSphere(quadric, obj.size / 2.0f, 20, 20);
+    gluDeleteQuadric(quadric);
 
     glPopMatrix();
+    glDisable(GL_TEXTURE_2D);
     glPopAttrib();
 }
 
@@ -484,30 +407,13 @@ void display(void) {
               0.0, 1.0, 0.0);
 
     // Малювання зірки в центрі
-    drawStar();
+    drawStar(sun);
 
     // Малювання планети на орбіті
-    glPushMatrix();
+    // glPushMatrix();
 
-    // Обертання орбіти
-    glRotatef(planetRevolution, 0.0f, 1.0f, 0.0f);
-
-    // Відстань від зірки
-    glTranslatef(8.0f, 0.0f, 0.0f);
-
-    // Нахил осі планети (23.5 градусів)
-    glRotatef(-23.5f, 0.0f, 0.0f, 1.0f);
-
-    // Обертання планети навколо своєї осі
-    glRotatef(planetRotation, 0.0f, 1.0f, 0.0f);
-
-    drawPlanet();
-    glPopMatrix();
-
-    // Малювання рухомих об'єктів з ламаною траєкторією
-    for (const auto& obj : movingObjects) {
-        drawMovingObject(obj);
-    }
+    drawPlanet(moon);
+    // glPopMatrix();
 
     // Малювання меж сцени
     drawSceneBounds();
@@ -532,17 +438,8 @@ void reshape(int width, int height) {
 // Функція анімації
 void animate(int value) {
     if (animationActive) {
-        // Оновлення кутів обертання
-        planetRotation += rotationSpeed * deltaTime;
-        if (planetRotation > 360.0f) planetRotation -= 360.0f;
-
-        planetRevolution += rotationSpeed * 0.1f * deltaTime;
-        if (planetRevolution > 360.0f) planetRevolution -= 360.0f;
-
-        // Оновлення положення рухомих об'єктів
-        for (auto& obj : movingObjects) {
-            obj.update(moveSpeed, deltaTime);
-        }
+        sun.update(moveSpeed, rotationSpeed, deltaTime);
+        moon.update(moveSpeed, rotationSpeed, deltaTime);
     }
 
     glutPostRedisplay();
